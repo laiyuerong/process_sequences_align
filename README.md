@@ -1,6 +1,8 @@
 # process_sequences_align
 tube of sequence alignment
+
 current directory/
+
 ├── process_sequences.py
 
 ├── rmxg.py
