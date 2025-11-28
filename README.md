@@ -18,7 +18,8 @@ current directory/
 It need an index file in current directory, several sample.fasta files, and importantly, two python files: process_sequences.py + rmxg.py.
 
 command:
->python process_sequences.py
+
+> python process_sequences.py
 
 
 ├── process_sequences.py
