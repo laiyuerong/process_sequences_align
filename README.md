@@ -11,10 +11,7 @@ current directory/
 
 ├── sample2.fasta
 
-├── index
-
-
-    └── index.fasta
+├── index/index.fasta
 
 It need an index file in current directory, several sample.fasta files, and importantly, two python files: process_sequences.py + rmxg.py.
 
