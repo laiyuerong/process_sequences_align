@@ -11,7 +11,8 @@ current directory/
 
 ├── sample2.fasta
 
-├── index/
+├── index
+
 
     └── index.fasta
 
@@ -21,28 +22,3 @@ command:
 
 > python process_sequences.py
 
-
-├── process_sequences.py
-
-├── rmxg.py
-
-├── sample1.fasta
-
-├── sample2.fasta
-
-├── index/
-
-│   └── index.fasta
-
-└── clean/
-
-    ├── sample1.fasta
-    
-    ├── sample2.fasta
-    
-    └── logs/
-    
-        ├── sample1_removed.log
-        
-        └── sample2_removed.log
-        
