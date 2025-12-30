@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+"""
+序列自动化处理全流程脚本
+流程：
+1. Seqkit 去除重复ID
+2. MAFFT 序列比对
+3. 质量过滤 (滤 X 和 - 过多的序列)
+"""
+
+import os
+import glob
+import subprocess
+import sys
+
+# ===============================================================================
+# 第一部分：质量过滤核心功能
+# ===============================================================================
+
+def read_fasta(file_path):
+    """读取FASTA文件，返回序列记录列表"""
+    sequences = []
+    current_header = ""
+    current_sequence = ""
+    
+    try:
+        with open(file_path, 'r') as file:
+            for line in file:
+                line = line.strip()
+                if line.startswith('>'):
+                    # 保存前一个序列
+                    if current_header and current_sequence:
+                        sequences.append((current_header, current_sequence))
+                    
+                    # 开始新序列
+                    current_header = line
+                    current_sequence = ""
+                else:
+                    current_sequence += line
+            
+            # 保存最后一个序列
+            if current_header and current_sequence:
+                sequences.append((current_header, current_sequence))
+                
+    except FileNotFoundError:
+        print(f"错误: 找不到文件 {file_path}")
+        return None
+    except Exception as e:
+        print(f"读取文件出错 {file_path}: {e}")
+        return None
+    
+    return sequences
+
+def calculate_issue_percentage(sequence):
+    """计算序列中X和-字符的比例"""
+    total_length = len(sequence)
+    if total_length == 0:
+        return 0.0, 0.0
+    
+    upper_seq = sequence.upper()
+    x_count = upper_seq.count('X')
+    gap_count = upper_seq.count('-')
+    
+    x_percentage = (x_count / total_length) * 100
+    gap_percentage = (gap_count / total_length) * 100
+    
+    return x_percentage, gap_percentage
+
+def write_fasta(sequences, output_file):
+    """将序列写入FASTA文件"""
+    with open(output_file, 'w') as file:
+        for header, sequence in sequences:
+            file.write(header + '\n')
+            # 每行写60个字符，保持标准FASTA格式
+            for i in range(0, len(sequence), 60):
+                file.write(sequence[i:i+60] + '\n')
+
+def run_quality_filter(input_file, output_file, log_file, x_threshold=5.0, gap_threshold=5.0):
+    """
+    执行质量过滤的主要逻辑函数
+    返回: bool (是否成功写入了输出文件)
+    """
+    print(f"  正在根据质量过滤: {os.path.basename(input_file)}")
+    
+    sequences = read_fasta(input_file)
+    if sequences is None:
+        return False
+        
+    total_count = len(sequences)
+    filtered_sequences = []
+    removed_count = 0
+    removed_sequences_info = []
+    
+    for header, sequence in sequences:
+        x_percentage, gap_percentage = calculate_issue_percentage(sequence)
+        
+        # 检查是否同时满足两个阈值要求
+        if x_percentage <= x_threshold and gap_percentage <= gap_threshold:
+            filtered_sequences.append((header, sequence))
+        else:
+            removed_count += 1
+            # 提取序列ID用于日志
+            seq_id = header[1:].split()[0] if header.startswith('>') else header
+            removal_info = f"移除序列: {seq_id} (X比例: {x_percentage:.2f}%, -比例: {gap_percentage:.2f}%)"
+            removed_sequences_info.append(removal_info)
+    
+    # 只有当有保留序列时才写入文件
+    if filtered_sequences:
+        write_fasta(filtered_sequences, output_file)
+        
+        # 写入日志文件
+        if log_file:
+            with open(log_file, 'w') as log:
+                log.write(f"# 序列过滤日志 - {os.path.basename(input_file)}\n")
+                log.write(f"# X阈值: {x_threshold}%, -阈值: {gap_threshold}%\n")
+                log.write(f"# 总序列数: {total_count}\n")
+                log.write(f"# 保留序列数: {len(filtered_sequences)}\n")
+                log.write(f"# 移除序列数: {removed_count}\n")
+                log.write("# 移除的序列详情:\n")
+                for info in removed_sequences_info:
+                    log.write(info + '\n')
+                    
+        print(f"    - 总序列: {total_count}")
+        print(f"    - 保留: {len(filtered_sequences)}, 移除: {removed_count}")
+        return True
+    else:
+        print(f"    警告: 文件 {os.path.basename(input_file)} 所有序列均未通过过滤！")
+        return False
+
+# ===============================================================================
+# 第二部分：流程自动化控制
+# ===============================================================================
+
+def run_command(cmd, description=""):
+    """运行外部命令并检查执行状态"""
+    # print(f"执行命令: {cmd}") # 调试时可开启
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    
+    if result.returncode != 0:
+        print(f"错误: {description} 执行失败")
+        print(f"错误信息: {result.stderr}")
+        return False
+    return True
+
+def main():
+    # 配置参数
+    CLEAN_DIR = "clean"
+    LOGS_DIR = os.path.join(CLEAN_DIR, "logs")
+    INDEX_FILE = "./index/index.fasta" # MAFFT需要的索引文件
+    
+    # 质量过滤阈值设置
+    X_THRESHOLD = 5.0
+    GAP_THRESHOLD = 5.0
+    
+    # 创建目录
+    os.makedirs(CLEAN_DIR, exist_ok=True)
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    
+    print("="*60)
+    print("开始序列处理自动化流程 (合并版)")
+    print("="*60)
+    
+    # 获取输入文件
+    fasta_files = glob.glob("*.fasta")
+    if not fasta_files:
+        print("当前目录下未找到任何 .fasta 文件！")
+        return
+
+    # -----------------------------------------------------------
+    # 步骤 1: Seqkit 去重
+    # -----------------------------------------------------------
+    print("\n步骤 1/3: 使用 seqkit 去除重复ID...")
+    dedup_files = []
+    
+    for fasta_file in fasta_files:
+        base_name = os.path.splitext(fasta_file)[0]
+        dedup_file = os.path.join(CLEAN_DIR, f"{base_name}_dedup.fasta")
+        dup_log = os.path.join(LOGS_DIR, f"{base_name}_duplicates.log")
+        
+        # Seqkit 命令
+        cmd = f'seqkit rmdup -i "{fasta_file}" -o "{dedup_file}" -D "{dup_log}"'
+        
+        if run_command(cmd, f"去重 {fasta_file}"):
+            print(f"  √ 已去重: {fasta_file}")
+            dedup_files.append(dedup_file)
+        else:
+            print(f"  × 跳过: {fasta_file}")
+
+    if not dedup_files:
+        print("去重步骤未生成任何文件，流程终止。")
+        return
+
+    # -----------------------------------------------------------
+    # 步骤 2: MAFFT 比对
+    # -----------------------------------------------------------
+    print("\n步骤 2/3: 执行 MAFFT 序列比对...")
+    
+    if not os.path.exists(INDEX_FILE):
+        print(f"警告: 索引文件 {INDEX_FILE} 不存在，MAFFT 可能报错。")
+
+    mafft_files = [] # 存储 (比对后文件路径, 原始文件基名)
+    
+    for dedup_file in dedup_files:
+        base_name = os.path.splitext(os.path.basename(dedup_file))[0].replace("_dedup", "")
+        mafft_output = os.path.join(CLEAN_DIR, f"{base_name}_mafft.fasta")
+        
+        cmd = f'mafft --auto --keeplength --add "{dedup_file}" "{INDEX_FILE}" > "{mafft_output}"'
+        
+        if run_command(cmd, f"MAFFT比对 {base_name}"):
+            print(f"  √ 比对完成: {base_name}")
+            mafft_files.append((mafft_output, base_name))
+        else:
+            print(f"  × 比对失败: {base_name}")
+
+    if not mafft_files:
+        print("比对步骤未生成任何文件，流程终止。")
+        return
+
+    # -----------------------------------------------------------
+    # 步骤 3: 质量过滤 (Python内部处理)
+    # -----------------------------------------------------------
+    print(f"\n步骤 3/3: 执行序列质量过滤 (X>{X_THRESHOLD}%, Gap>{GAP_THRESHOLD}%) ...")
+    
+    success_count = 0
+    for mafft_file, base_name in mafft_files:
+        # 最终输出文件名 (直接用原始基名，如 gene.fasta)
+        final_output = os.path.join(CLEAN_DIR, f"{base_name}.fasta")
+        filter_log = os.path.join(LOGS_DIR, f"{base_name}_removed.log")
+        
+        # 调用内部函数进行过滤，不再调用外部脚本
+        success = run_quality_filter(
+            input_file=mafft_file,
+            output_file=final_output,
+            log_file=filter_log,
+            x_threshold=X_THRESHOLD,
+            gap_threshold=GAP_THRESHOLD
+        )
+        
+        if success:
+            success_count += 1
+            # 清理中间文件 (mafft结果 和 dedup结果)
+            if os.path.exists(mafft_file):
+                os.remove(mafft_file)
+            
+            dedup_file = os.path.join(CLEAN_DIR, f"{base_name}_dedup.fasta")
+            if os.path.exists(dedup_file):
+                os.remove(dedup_file)
+
+    # -----------------------------------------------------------
+    # 总结
+    # -----------------------------------------------------------
+    print("\n" + "="*60)
+    print("所有流程处理完成！")
+    print(f"输出目录: {CLEAN_DIR}/")
+    print(f"日志目录: {LOGS_DIR}/")
+    
+    final_files = glob.glob(os.path.join(CLEAN_DIR, "*.fasta"))
+    # 排除中间文件，只显示最终结果
+    final_files = [f for f in final_files if "_dedup" not in f and "_mafft" not in f]
+    
+    print(f"\n成功生成的最终文件 ({len(final_files)}个):")
+    for f in final_files:
+        print(f"  - {os.path.basename(f)}")
+
+if __name__ == "__main__":
+    main()
