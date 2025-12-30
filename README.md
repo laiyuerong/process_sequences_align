@@ -1,21 +1,17 @@
 # process_sequences_align
-tube of sequence alignment
+#处理当前文件夹下所有fasta文件，处理后的fasta文件在./clean文件夹目录下，同时，./clean目录下还有一个./clean/logs文件，用来储存处理日志。
+#需要索引文件在当前文件夹下 ./index/index/fasta
 
-current directory/
+bash
+python align.py
 
-├── process_sequences.py
+#帮助
+python align.py -h
 
-├── rmxg.py
 
-├── sample1.fasta
+#修改参数
 
-├── sample2.fasta
-
-├── index/index.fasta
-
-It need an index file in current directory, several sample.fasta files, and importantly, two python files: process_sequences.py + rmxg.py.
-
-command:
-
-> python process_sequences.py
-
+#修改阈值，-x 10，去除X占比超过10%的序列；-g 20，去除-占比超过20%的序列
+python auto_process.py -x 10 -g 20
+#指定索引文件位置
+python auto_process.py --index /home/user/data/ref_index.fasta
